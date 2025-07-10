@@ -17,24 +17,21 @@ class TicTacToeBoard():
         return current_player == self.player_turn and self.state == "is_playing" #T or F
         
     def check_winner(self):
-        if (
-            self.positions[0] == self.positions[1] == self.positions[2] != " "
-        or self.positions[3] == self.positions[4] == self.positions[5] != " "
-        or self.positions[6] == self.positions[7] == self.positions[8] != " "
-        or self.positions[0] == self.positions[3] == self.positions[6] != " "
-        or self.positions[1] == self.positions[4] == self.positions[7] != " "
-        or self.positions[2] == self.positions[5] == self.positions[8] != " "
-        or self.positions[0] == self.positions[4] == self.positions[8] != " "
-        or self.positions[2] == self.positions[4] == self.positions[6] != " "
-        ):
-            self.end_message = f"Game over! \n{self.player_turn.upper()} wins! Final board:\n{self.display_board()}"
-            self.state = "game_over"
-            return True
+        winning_possibilities = [
+        [0, 1, 2],  [3, 4, 5], [6, 7, 8],  # rows
+        [0, 3, 6],  [1, 4, 7],  [2, 5, 8],  # columns
+        [0, 4, 8],  [2, 4, 6] # diagonals
+        ]      
+        for [a, b, c] in winning_possibilities:
+            if self.positions[a] == self.positions[b] == self.positions[c] and self.positions[a] in ["x", "o"]:
+                self.end_message = f"Game over! \n{self.player_turn.upper()} wins! Final board:\n{self.display_board(hide_numbers = True)}"
+                self.state = "game_over"
+                return True
         return False
     
     def check_draw(self):
         if all(pos in ["x", "o"] for pos in self.positions): #chatgpt
-            self.end_message = f"Game over! \nIt's a draw! Final board:\n{self.display_board()}"
+            self.end_message = f"Game over! \nIt's a draw! Final board:\n{self.display_board(hide_numbers = True)}"
             self.state = "game_over"
             return True
         return False
@@ -117,10 +114,13 @@ class TicTacToeBoard():
         self.positions = [str(n) for n in range(9)]
         self.save_to_redis()
          
-    def display_board(self): #chatgpt
+    def display_board(self, hide_numbers = False): #chatgpt. for asthetic reasons, I put it in an actual board.
+        def clean(pos): #chatgpt. wouldn't return this until the end of the game, where it's true.
+            return pos if pos in ["x", "o"] else (" " if hide_numbers else pos)
+        
         rows = []
         for n in range(0, 9, 3):
-            row = f" {self.positions[n]} | {self.positions[n+1]} | {self.positions[n+2]}"
+            row = f" {clean(self.positions[n])} | {clean(self.positions[n+1])} | {clean(self.positions[n+2])}"
             rows.append(row)
             if n < 6:
                 rows.append("---+---+---")
