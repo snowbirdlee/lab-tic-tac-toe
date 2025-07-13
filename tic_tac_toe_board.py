@@ -3,8 +3,6 @@ from redis.asyncio import Redis
 import json
 from dotenv import load_dotenv
 import os
-import asyncio
-
 
 load_dotenv()
 
@@ -158,19 +156,5 @@ class TicTacToeBoard:
         self.positions = refreshed_game.positions
         self.end_message = refreshed_game.end_message
         return
-    
-if __name__ == "__main__":
-    async def test_make_move():
-        board = TicTacToeBoard(redis_key=redis_key)
-        await board.reset_self()  # Always start from clean state
-
-        move_result = await board.make_move("x", 0)
-        print("Move Result:", move_result)
-        print(board.display_board())
-
-    asyncio.run(test_make_move())
-
-
-
-    
+  
     

@@ -21,14 +21,14 @@ async def handle_board_state(i_am_playing, game_data, client): #chatgpt help
     except ValueError:
         print("Invalid input. Please enter a whole number between 0-8.")
         return
-    response = await client.post("http://localhost:8000/move", json={
+    response = await client.post("http://localhost:8000/move", json={ #step 6
         "player": i_am_playing,
         "index": index
     })  
     if response.status_code != 200:
         try:
             error = response.json()
-            print(error.get("message", "Move failed."))
+            print(error.get("message", "Move failed.")) #step 6. just in case it failed to get the message
         except Exception:
             print("Move failed.")
         return 
@@ -62,13 +62,13 @@ async def listen_for_updates(player, client): #mostly chatgpt
                 data = json.loads(message["data"])
             except Exception:
                 continue
-            if data.get("type") != "GAME_UPDATE":
+            if data.get("type") != "GAME_UPDATE": #step 6
                 continue
-            if data.get("from") == player:  # 🚫 SKIP your own update
+            if data.get("from") == player:  #step 6. skip your own update. chatgpt
                 continue   
             if "message" in data:
                 print(data["message"])
-            response = await client.get("http://localhost:8000/state")
+            response = await client.get("http://localhost:8000/state") #step 6
             if response.status_code != 200:
                 print("Failed to update board from other player.")
                 continue
@@ -76,7 +76,6 @@ async def listen_for_updates(player, client): #mostly chatgpt
                 game_data = response.json()
             except Exception:
                 continue
-            #print(game_data["display"])
             if game_data["state"] == "game_over":
                 print(game_data["display"])
                 print(game_data["end_message"])
@@ -96,7 +95,7 @@ async def main():
 
     if args.reset:
         async with httpx.AsyncClient() as client:
-            await client.post("http://localhost:8000/request")
+            await client.post("http://localhost:8000/request") #step 6
         print("Game has been reset.")
         return
 
@@ -107,7 +106,7 @@ async def main():
         waiting_printed = False
 
         while True:
-            response = await client.get("http://localhost:8000/state")
+            response = await client.get("http://localhost:8000/state") #step 6
             if response.status_code != 200:
                 print("The server did not return a valid response.")
                 return
