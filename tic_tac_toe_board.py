@@ -1,19 +1,29 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from redis.asyncio import Redis
 import json
+from dotenv import load_dotenv
+import os
 import asyncio
 
 
-redis_client = Redis(host="ai.thewcl.com", port=6379, password="atmega328", db=2, decode_responses=True)
-redisKey = "tic_tac_toe:game_state:2"
+load_dotenv()
+
+# Redis info
+redis_client_password = os.getenv("redis_client_password")
+redis_client = Redis(host="ai.thewcl.com", port=6379, password=redis_client_password, db=2, decode_responses=True)
+redis_key = "tic_tac_toe:game_state:2"
 pubsub_channel = "ttt:game_state_changed:2"
 
+#THE BOARD
 @dataclass
 class TicTacToeBoard:
     state: str = field(default = "is_playing")
     player_turn: str = field(default = "x")
-    positions: list = field(default_factory=lambda: [str(n) for n in range(9)])
+    positions: list = field(default_factory=lambda: [str(n) for n in range(9)]) #numbers the board
     end_message: str = field(default = "")
+    redis_key: str = redis_key
+    
+    
     
 #STEP 1 METHODS
     def is_my_turn(self, current_player: str):
@@ -27,16 +37,17 @@ class TicTacToeBoard:
         ]      
         for [a, b, c] in winning_possibilities:
             if self.positions[a] == self.positions[b] == self.positions[c] and self.positions[a] in ["x", "o"]:
-                self.end_message = f"Game over! \n{self.player_turn.upper()} wins! Final board:\n{self.display_board(hide_numbers=True)}"
+                self.end_message = f"Game over! \n{self.player_turn.upper()} wins!"
                 self.state = "game_over"
-                return True
+                return True #runs when winner is found
         return False
     
     def check_draw(self):
-        if all(pos in ["x", "o"] for pos in self.positions): #chatgpt
-            self.end_message = f"Game over! \nIt's a draw! Final board:\n{self.display_board(hide_numbers=True)}"
-            self.state = "game_over"
-            return True
+        if not self.check_winner():
+            if all(pos in ["x", "o"] for pos in self.positions): #chatgpt
+                self.end_message = "Game over! \nIt's a draw!"
+                self.state = "game_over"
+                return True #runs when a draw is found
         return False
     
     def switch_turn(self):
@@ -45,75 +56,74 @@ class TicTacToeBoard:
         else:
             self.player_turn = "x"
 
-    async def make_move(self, current_player):
-        waiting_printed = False
+    async def make_move(self, current_player, index):
+        # Reload latest game state
+        await self.refresh_game()
 
-        while True:
-            refreshed_game = await TicTacToeBoard.load_from_redis()
-            if refreshed_game.state == "game_over":
-                self.state = refreshed_game.state
-                self.player_turn = refreshed_game.player_turn
-                self.positions = refreshed_game.positions
-                self.end_message = refreshed_game.end_message
-                return
-
-            if refreshed_game.is_my_turn(current_player):
-                self.state = refreshed_game.state
-                self.player_turn = refreshed_game.player_turn
-                self.positions = refreshed_game.positions
-                break
-            else:
-                if not waiting_printed:
-                    print("\nWaiting for player...\n")
-                    waiting_printed = True
-
-        print(self.display_board())
-
-        while True:
-            try:
-                index = await asyncio.to_thread(input, "What's your move? (0-8) ")
-                index = int(index)
-                if index < 0 or index >= 9:
-                    print("Please enter a valid number (0-8)")
-                    continue
-                if self.positions[index] in ["x", "o"]:
-                    print("That spot is already taken.")
-                    continue
-                self.positions[index] = self.player_turn
-                break
-            except ValueError:
-                print("Please enter a valid number (0-8).")
-
-        print(self.display_board())
-
+        # when game is over, we don't want any more moves
+        if self.state == "game_over": 
+            return {
+                "success": False,
+                "message": "Game is already over."
+            }
+        # if it's not their turn, we don't want them to go
+        if not self.is_my_turn(current_player):
+            return {
+                "success": False,
+                "message": "It's not your turn."
+            }
+        # Validate move; if they didn't put an integer between 0 and 8, we don't want them to go
+        if not isinstance(index, int) or not (0 <= index <= 8):
+            return {
+                "success": False,
+                "message": "Please enter a valid whole number (0-8)."
+            }
+        # if the spot is already taken, we don't want them to go    
+        if self.positions[index] in ["x", "o"]:
+            return {
+                "success": False,
+                "message": "That spot is already taken."
+            }
+        # Make the move if all the "if's" don't pass
+        self.positions[index] = self.player_turn
+        # if there's a winner or a draw, we're done and it'll show the board
         if self.check_winner() or self.check_draw():
             await self.save_to_redis()
+            return {
+                "success": True,
+                "message": self.end_message,
+                "board": self.to_dict(hide_numbers=True)
+            }
         else:
+            # Otherwise, switch turns and continue. save to redis.
             self.switch_turn()
             await self.save_to_redis()
-
+            # it'll make a move
+            return {
+                "success": True,
+                "message": "Move successful.",
+                "board": self.to_dict(hide_numbers=False)
+            }
             
 #STEP 2 METHODS
     def serialize(self):
-        return json.dumps({
-            "state": self.state,
-            "player_turn": self.player_turn,
-            "positions": self.positions,
-            "end_message": self.end_message
-        }) # puts the attributes to json data
+        return json.dumps(self.to_dict(include_display=False)) # puts the attributes to json data
     
     async def save_to_redis(self): #chatgpt
-        json_string = self.serialize() #calls serialized string
-        parsed_dictionary = json.loads(json_string) #turns it into a json dictionary
-        await redis_client.json().set(redisKey, ".", parsed_dictionary) #save to redisjson
+        json_string = self.serialize()
+        #parsed_dictionary = json.loads(json_string) #turns it into a json dictionary
+        await redis_client.set(self.redis_key, json_string) #save to redisjson
         
     @classmethod
     async def load_from_redis(cls):
-        data = await redis_client.json().get(redisKey) #gets game state from redis
-        if data is None:
-            raise ValueError("No game state found in Redis") #checks if it exists in redis and warns if it doesn't
-        return cls(**data) #class is returned
-    
+        temp_instance = cls()
+        raw_data = await redis_client.get(temp_instance.redis_key) # gets the board from redis
+        if raw_data is None:
+            return cls() # the class itself
+        data = json.loads(raw_data)
+        data.pop("display", None)
+        return cls(**data) #class is returned. ** is dictionary UNPACKING
+        
     async def reset_self(self): #resets the game state
         self.state = "is_playing"
         self.player_turn = "x"
@@ -132,43 +142,35 @@ class TicTacToeBoard:
                 rows.append("---+---+---")
         return "\n".join(rows) + "\n"
     
-#STEP 3 METHODS
-    async def handle_board_state(self, i_am_playing, current_player):
+          
+#STEP 4 METHODS
+    def to_dict(self, include_display=True, hide_numbers=False): #new method, similar variables
+        board_dict = asdict(self)
+        if include_display:
+            board_dict["display"] = self.display_board(hide_numbers=hide_numbers)
+        return board_dict
+
+#misc
+    async def refresh_game(self):
         refreshed_game = await TicTacToeBoard.load_from_redis()
         self.state = refreshed_game.state
         self.player_turn = refreshed_game.player_turn
         self.positions = refreshed_game.positions
         self.end_message = refreshed_game.end_message
+        return
+    
+if __name__ == "__main__":
+    async def test_make_move():
+        board = TicTacToeBoard(redis_key=redis_key)
+        await board.reset_self()  # Always start from clean state
 
-        if self.state == "game_over":
-            return
+        move_result = await board.make_move("x", 0)
+        print("Move Result:", move_result)
+        print(board.display_board())
 
-        if not self.is_my_turn(current_player):
-            if not hasattr(self, "_already_waiting"):
-                print("Waiting for your turn...")
-                self._already_waiting = True
-            return
+    asyncio.run(test_make_move())
 
-        if hasattr(self, "_already_waiting"):
-            del self._already_waiting
 
-        await self.make_move(current_player)
-        await redis_client.publish(pubsub_channel, i_am_playing)
 
-    async def listen_for_updates(self):
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe(pubsub_channel)
-        print(f"Listening to channel: {pubsub_channel}")
-
-        try:
-            async for message in pubsub.listen():
-                if message["type"] != "message":
-                    continue
-                latest_game = await TicTacToeBoard.load_from_redis()
-                if latest_game.state == "game_over":
-                    break
-                print(f"\nUpdate from other player: {message['data']}\n")
-        except asyncio.CancelledError:
-            print("Stopped listening")
-        finally:
-            await pubsub.unsubscribe(pubsub_channel)
+    
+    
