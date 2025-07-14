@@ -7,16 +7,56 @@ from dotenv import load_dotenv
 import json
 import websockets
 
+connected_clients = set()
+
+async def websocket_handler(websocket): #chatgpt (deleted: path)
+    connected_clients.add(websocket)
+    try:
+        # Immediately send the current state when someone joins midgame. chatgpt
+        async with httpx.AsyncClient() as client:
+            response = await client.get("http://localhost:8000/state")
+            if response.status_code == 200:
+                game_data = response.json()
+                await websocket.send(json.dumps({
+                    "positions": game_data["positions"],
+                    "state": game_data["state"],
+                    "player_turn": game_data["player_turn"]
+                }))
+                
+        await websocket.wait_closed()  # just keep it open
+    finally:
+        connected_clients.remove(websocket)
+
 #websocket
 WEBSOCKET_URL = "ws://ai.thewcl.com:8702"
 
-async def send_game_state_over_websocket(positions):
-    try:
-        async with websockets.connect(WEBSOCKET_URL) as websocket:
-            message = json.dumps({"positions": positions})
-            await websocket.send(message)
-    except Exception as e:
-        print("⚠️ Failed to send game state to WebSocket:", e)
+async def broadcast_game_state(game_data):#step 8. chatgpt. this time it's to all clients, not just websocket
+    if not connected_clients:
+        return
+    
+    positions = game_data.get("positions")
+    state = game_data.get("state")
+
+    if positions is None or state is None:
+        print("broadcast_game_state: Missing positions or state, skipping broadcast.")
+        return
+    
+    message = json.dumps({
+        "positions": positions,
+        "state": state,
+        "player_turn": game_data.get("player_turn")
+    })
+    to_remove = set()
+
+    for ws in connected_clients:
+        try:
+            await ws.send(message)
+        except Exception:
+            to_remove.add(ws)
+
+    # Clean up dead connections
+    for ws in to_remove:
+        connected_clients.remove(ws)  
 
 
 
@@ -51,13 +91,14 @@ async def handle_board_state(i_am_playing, game_data, client): #chatgpt help
     except Exception as e:
         print("Failed to parse move response JSON:", e)
         return     
-    if result["success"]:
-        asyncio.create_task(send_game_state_over_websocket(result["board"]))
-        if "board" in result and "display" in result["board"]:
-            print(result["board"]["display"])    
-        # Show the message: "Move successful" or "Game over"
-        print(result["message"])
-        # 🔊 Publish to pubsub so the other player sees the change
+    
+    if result["success"]: #chatgpt
+        board_data = result.get("board") or {}
+        asyncio.create_task(broadcast_game_state(board_data)) 
+        display = board_data.get("display")
+        if display:
+            print(display)
+        print(result.get("message", ""))
         await redis_client.publish(pubsub_channel, json.dumps({
             "type": "GAME_UPDATE",
             "from": i_am_playing,  # or player
@@ -77,13 +118,14 @@ async def listen_for_updates(player, client): #mostly chatgpt
                 data = json.loads(message["data"])
             except Exception:
                 continue
-            if data.get("type") != "GAME_UPDATE": #step 6
+            if data.get("type") != "GAME_UPDATE":
                 continue
-            if data.get("from") == player:  #step 6. skip your own update. chatgpt
+            if data.get("from") == player:  #skip your own update. chatgpt
                 continue   
             if "message" in data:
                 print(data["message"])
-            response = await client.get("http://localhost:8000/state") #step 6
+            response = await client.get("http://localhost:8000/state") 
+            
             if response.status_code != 200:
                 print("Failed to update board from other player.")
                 continue
@@ -91,10 +133,13 @@ async def listen_for_updates(player, client): #mostly chatgpt
                 game_data = response.json()
             except Exception:
                 continue
+
             if game_data["state"] == "game_over":
                 print(game_data["display"])
                 print(game_data["end_message"])
                 break
+            await broadcast_game_state(game_data)
+            
     except asyncio.CancelledError:
         pass
     finally:
@@ -122,7 +167,8 @@ async def main():
     async with httpx.AsyncClient() as client:
         listener_task = asyncio.create_task(listen_for_updates(i_am_playing, client))
         waiting_printed = False
-
+        if i_am_playing == "x": #server starts when x starts. chatgpt
+            await websockets.serve(websocket_handler, "localhost", 8702)
         while True:
             response = await client.get("http://localhost:8000/state") #step 6
             if response.status_code != 200:
@@ -154,4 +200,7 @@ async def main():
         pass
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nGame interrupted by user.")
