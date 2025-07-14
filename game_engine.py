@@ -96,7 +96,7 @@ async def main():
     if args.reset:
         async with httpx.AsyncClient() as client:
             response = await client.post("http://localhost:8000/reset") #step 6
-            if response.status_code == 200: #this is getting the 
+            if response.status_code == 200:
                 data = response.json()
                 message = data.get("message", "") #prints what's on the server
                 print(message)
