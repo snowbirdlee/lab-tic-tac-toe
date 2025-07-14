@@ -5,6 +5,20 @@ from redis.asyncio import Redis
 import os
 from dotenv import load_dotenv
 import json
+import websockets
+
+#websocket
+WEBSOCKET_URL = "ws://ai.thewcl.com:8702"
+
+async def send_game_state_over_websocket(positions):
+    try:
+        async with websockets.connect(WEBSOCKET_URL) as websocket:
+            message = json.dumps({"positions": positions})
+            await websocket.send(message)
+    except Exception as e:
+        print("⚠️ Failed to send game state to WebSocket:", e)
+
+
 
 load_dotenv()
 
@@ -38,6 +52,7 @@ async def handle_board_state(i_am_playing, game_data, client): #chatgpt help
         print("Failed to parse move response JSON:", e)
         return     
     if result["success"]:
+        asyncio.create_task(send_game_state_over_websocket(result["board"]))
         if "board" in result and "display" in result["board"]:
             print(result["board"]["display"])    
         # Show the message: "Move successful" or "Game over"
